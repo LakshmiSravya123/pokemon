@@ -1,0 +1,23 @@
+{
+  "annotations":{
+    "list":[]
+  },
+  "panels":[
+    {
+      "type":"stat",
+      "title":"Last run success",
+      "targets":[{"expr":"pokemon_pipeline_last_success"}]
+    },
+    {
+      "type":"timeseries",
+      "title":"Pokemon fetched",
+      "targets":[{"expr":"pokemon_fetched"}]
+    },
+    {
+      "type":"timeseries",
+      "title":"Pipeline runs (increase/day)",
+      "targets":[{"expr":"increase(pokemon_pipeline_runs_total[1d])"}]
+    }
+  ],
+  "title":"Pokemon Pipeline Metrics"
+}
