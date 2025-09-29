@@ -3,45 +3,57 @@ import requests
 import pandas as pd
 import altair as alt
 from sqlalchemy import create_engine
-import mysql.connector
-
-# Prometheus client for metrics
-from prometheus_client import Counter, Gauge, start_http_server
+import psycopg2
 import threading
+from prometheus_client import Counter, Gauge, start_http_server
 
-# MySQL configuration (update with your credentials)
+# PostgreSQL configuration (update with your credentials)
 db_config = {
-    "user": "your-username",  # Replace with your MySQL username
-    "password": "your-password",  # Replace with your MySQL password
-    "host": "localhost",  # Or your MySQL host (e.g., PlanetScale hostname)
-    "database": "pokemon_db"
+    "user": "neondb_owner",  # From Neon dashboard
+    "password": "npg_kYHXo1n4WMPV",  # From Neon dashboard
+    "host": "ep-raspy-tooth-adc28g5b-pooler.c-2.us-east-1.aws.neon.tech",  # From Neon dashboard
+    "port": "5432",
+    "database": "pokemon_db"  # Or "neondb" if you didn’t create a new database
 }
-
-# Create MySQL database and table if not exists
+# Create PostgreSQL database and table if not exists
 def init_db():
     try:
-        conn = mysql.connector.connect(**db_config)
+        conn = psycopg2.connect(**db_config)
+        conn.set_session(autocommit=True)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS pokemon (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 name VARCHAR(255),
                 types VARCHAR(255),
                 height FLOAT,
                 weight FLOAT,
-                hp INT,
-                attack INT,
-                defense INT,
-                special_attack INT,
-                special_defense INT,
-                speed INT
+                hp INTEGER,
+                attack INTEGER,
+                defense INTEGER,
+                special_attack INTEGER,
+                special_defense INTEGER,
+                speed INTEGER
             )
         """)
-        conn.commit()
         cursor.close()
         conn.close()
-    except mysql.connector.Error as err:
+    except psycopg2.Error as err:
         st.error(f"Database error: {err}")
+
+# Prometheus metrics
+PIPELINE_RUNS = Counter('pokemon_pipeline_runs_total', 'Total pipeline runs')
+POKEMON_FETCHED = Gauge('pokemon_fetched', 'Number of pokemon fetched in last run')
+LAST_RUN_SUCCESS = Gauge('pokemon_pipeline_last_success', '1 if last pipeline run succeeded, 0 otherwise')
+
+
+def start_metrics_server(port: int = 8000):
+    start_http_server(port)
+
+
+# Start metrics server in background
+metrics_thread = threading.Thread(target=start_metrics_server, args=(8000,), daemon=True)
+metrics_thread.start()
 
 # Function to fetch list of Pokémon
 def fetch_pokemon_list(limit=50):
@@ -62,7 +74,7 @@ def fetch_pokemon_details(url):
         stats = {s['stat']['name']: s['base_stat'] for s in data['stats']}
         return {
             'name': data['name'],
-            # store types as list so we can explode later
+            # keep types as list for explode and analyses
             'types': types,
             'height': data['height'],
             'weight': data['weight'],
@@ -75,28 +87,19 @@ def fetch_pokemon_details(url):
         }
     return None
 
-# Function to save DataFrame to MySQL
-def save_to_mysql(df):
+# Function to save DataFrame to PostgreSQL
+def save_to_postgres(df):
     try:
-        engine = create_engine(f"mysql+mysqlconnector://{db_config['user']}:{db_config['password']}@{db_config['host']}/{db_config['database']}")
-        df.to_sql('pokemon', con=engine, if_exists='replace', index=False)
-        st.success("Data saved to MySQL successfully!")
+        # Build SQLAlchemy engine URL; Neon may require sslmode=require
+        engine = create_engine(f"postgresql+psycopg2://{db_config['user']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}?sslmode=require")
+        # Convert list-like 'types' to comma-separated string for storage
+        store_df = df.copy()
+        if 'types' in store_df.columns:
+            store_df['types'] = store_df['types'].apply(lambda x: ', '.join(x) if isinstance(x, (list, tuple)) else str(x))
+        store_df.to_sql('pokemon', con=engine, if_exists='replace', index=False)
+        st.success("Data saved to PostgreSQL successfully!")
     except Exception as e:
-        st.error(f"Error saving to MySQL: {e}")
-
-# Prometheus metrics
-PIPELINE_RUNS = Counter('pokemon_pipeline_runs_total', 'Total pipeline runs')
-POKEMON_FETCHED = Gauge('pokemon_fetched', 'Number of pokemon fetched in last run')
-LAST_RUN_SUCCESS = Gauge('pokemon_pipeline_last_success', '1 if last pipeline run succeeded, 0 otherwise')
-
-
-def start_metrics_server(port: int = 8000):
-    # start_http_server blocks, so run in a background thread if needed
-    start_http_server(port)
-
-# Start metrics server in background
-metrics_thread = threading.Thread(target=start_metrics_server, args=(8000,), daemon=True)
-metrics_thread.start()
+        st.error(f"Error saving to PostgreSQL: {e}")
 
 # Streamlit app
 st.title("Pokémon Data Pipeline Dashboard")
@@ -105,7 +108,7 @@ st.markdown("""
 This app demonstrates a data pipeline:
 1. **Extract**: Fetch data from PokeAPI.
 2. **Transform**: Process into a DataFrame and compute aggregates.
-3. **Load**: Save to MySQL for Grafana integration.
+3. **Load**: Save to PostgreSQL for Grafana integration.
 4. **Visualize**: Interactive tables, charts, and stat comparisons.
 """)
 
@@ -113,7 +116,7 @@ This app demonstrates a data pipeline:
 init_db()
 
 # Step 1: Extract and Load data
-if st.button("Run Pipeline (Fetch, Process, Save to MySQL)"):
+if st.button("Run Pipeline (Fetch, Process, Save to PostgreSQL)"):
     with st.spinner("Fetching Pokémon data..."):
         success = False
         try:
@@ -128,23 +131,22 @@ if st.button("Run Pipeline (Fetch, Process, Save to MySQL)"):
             # Step 2: Transform into DataFrame
             df = pd.DataFrame(details)
 
-            # Ensure types column is string for display, but keep list for explode
+            # Normalize types column to list-like and create types_str for display
             if 'types' in df.columns:
-                # explode requires list-like; ensure each row has a list
-                df['types'] = df['types'].apply(lambda x: x if isinstance(x, list) else [x])
+                df['types'] = df['types'].apply(lambda x: x if isinstance(x, (list, tuple)) else [x])
                 df['types_str'] = df['types'].apply(lambda lst: ', '.join(lst))
 
-            # Save to MySQL
-            save_to_mysql(df.drop(columns=['types'], errors='ignore'))
+            # Save to PostgreSQL
+            save_to_postgres(df)
 
-            # Compute aggregates
+            # Compute aggregates (explode on list-like types)
             avg_stats_by_type = df.explode('types').groupby('types').mean(numeric_only=True).reset_index()
 
             # Cache data in session state for interactivity
             st.session_state['df'] = df
             st.session_state['avg_stats'] = avg_stats_by_type
 
-            # Update Prometheus metrics
+            # update Prometheus metrics
             POKEMON_FETCHED.set(len(df))
             LAST_RUN_SUCCESS.set(1)
             success = True
@@ -153,16 +155,14 @@ if st.button("Run Pipeline (Fetch, Process, Save to MySQL)"):
             st.error(f"Pipeline error: {e}")
         finally:
             if not success:
-                # ensure counter/gauge state
                 POKEMON_FETCHED.set(0)
 
 # Display results if data is available
 if 'df' in st.session_state:
     df = st.session_state['df']
-    avg_stats = st.session_state['avg_stats']
+    avg_stats = st.session_state.get('avg_stats', pd.DataFrame())
     
     st.subheader("Raw Data Table (First 10 Rows)")
-    # show types string for readability
     if 'types_str' in df.columns:
         display_df = df.copy()
         display_df['types'] = display_df['types_str']
@@ -187,9 +187,9 @@ if 'df' in st.session_state:
     
     # Interactive filter
     # build options from exploded types
-    types_unique = sorted(avg_stats['types'].unique()) if 'types' in avg_stats.columns else []
+    types_unique = sorted(avg_stats['types'].unique()) if not avg_stats.empty and 'types' in avg_stats.columns else []
     selected_type = st.selectbox("Filter by Type", options=types_unique)
-    filtered_df = df[df['types'].apply(lambda lst: selected_type in lst if isinstance(lst, list) else False)]
+    filtered_df = df[df['types'].apply(lambda lst: selected_type in lst if isinstance(lst, (list, tuple)) else False)]
     st.subheader(f"Pokémon with Type: {selected_type}")
     st.dataframe(filtered_df)
     

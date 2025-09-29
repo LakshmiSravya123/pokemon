@@ -3,5 +3,5 @@ requests
 pandas
 altair
 sqlalchemy
-mysql-connector-python
+psycopg2-binary
 prometheus-client
