@@ -1,6 +1,6 @@
 # Pokémon Data Pipeline
 
-This Streamlit app fetches Pokémon data from the public PokeAPI, transforms it into a DataFrame, saves it to MySQL, and exposes Prometheus metrics for Grafana visualization.
+This Streamlit app fetches Pokémon data from the public PokeAPI, transforms it into a DataFrame, saves it to PostgreSQL (Neon-ready), and exposes Prometheus metrics for Grafana visualization.
 
 Features
 - Extract Pokémon data from PokeAPI
@@ -19,7 +19,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Update MySQL credentials in `main.py` db_config.
+2. Update PostgreSQL / Neon credentials in `main.py` db_config.
+
+If you are using Neon, ensure your connection includes `sslmode=require`. The app attempts to add `?sslmode=require` to the SQLAlchemy URL by default. Set `db_config` values from your Neon dashboard.
 
 3. Run the Streamlit app:
 
@@ -32,6 +34,7 @@ streamlit run main.py
 Grafana
 
 - Import a dashboard or create panels that query Prometheus metrics `pokemon_pipeline_runs_total`, `pokemon_fetched`, and `pokemon_pipeline_last_success`.
+ - Import a dashboard or create panels that query Prometheus metrics `pokemon_pipeline_runs_total`, `pokemon_fetched`, and `pokemon_pipeline_last_success`.
 
 Notes
 
