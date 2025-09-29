@@ -1,0 +1,7 @@
+streamlit
+requests
+pandas
+altair
+sqlalchemy
+mysql-connector-python
+prometheus-client
