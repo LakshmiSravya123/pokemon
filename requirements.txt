@@ -5,3 +5,11 @@ altair
 sqlalchemy
 psycopg2-binary
 prometheus-client
+pytest
+streamlit
+requests
+pandas
+altair
+sqlalchemy
+psycopg2-binary
+prometheus-client
